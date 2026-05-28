@@ -1,35 +1,62 @@
 #include "RoverWiFiManager.h"
 
+#include <WiFi.h>
 #include <esp_wifi.h>
 
 #include "config/AppConfig.h"
 #include "config/Secrets.h"
 
-#define WIFI_RECONNECT_INTERVAL_MS 10000
+#define WIFI_RECONNECT_INTERVAL_MS 20000
+#define WIFI_CONNECT_TIMEOUT_MS    8000
 
 void RoverWiFiManager::begin() {
     Serial.println("[WIFI] Initializing Wi-Fi");
 
     WiFi.mode(WIFI_STA);
 
-    // REQUIRED for Bluetooth + WiFi coexistence
+    // Required when Wi-Fi and Classic Bluetooth run together on ESP32
+    WiFi.setSleep(true);
     esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 
-    WiFi.setSleep(true);
-
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(false);
     WiFi.persistent(false);
+
+    _lastReconnectAttempt = 0;
+
+    reconnect();
+}
+
+void RoverWiFiManager::update() {
+    if (WiFi.status() == WL_CONNECTED) {
+        return;
+    }
+
+    const uint32_t now = millis();
+
+    if ((now - _lastReconnectAttempt) >= WIFI_RECONNECT_INTERVAL_MS) {
+        _lastReconnectAttempt = now;
+        reconnect();
+    }
+}
+
+void RoverWiFiManager::reconnect() {
+    Serial.println("[WIFI] Attempting connection...");
+
+    WiFi.disconnect(false);
+    delay(100);
+
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(true);
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    Serial.print("[WIFI] Connecting");
+    const uint32_t startAttempt = millis();
 
-    uint8_t retries = 0;
-
-    while (WiFi.status() != WL_CONNECTED && retries < 20) {
-        delay(500);
+    while (WiFi.status() != WL_CONNECTED &&
+           (millis() - startAttempt) < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(250);
         Serial.print(".");
-        retries++;
     }
 
     Serial.println();
@@ -43,35 +70,9 @@ void RoverWiFiManager::begin() {
         Serial.print("[WIFI] RSSI: ");
         Serial.print(WiFi.RSSI());
         Serial.println(" dBm");
-
-        Serial.print("[WIFI] Hostname: ");
-        Serial.println(WiFi.getHostname());
     } else {
-        Serial.println("[WIFI] Connection failed");
+        Serial.println("[WIFI] Connection failed. System will continue offline.");
     }
-}
-
-void RoverWiFiManager::update() {
-    if (WiFi.status() == WL_CONNECTED) {
-        return;
-    }
-
-    uint32_t now = millis();
-
-    if ((now - _lastReconnectAttempt) >= WIFI_RECONNECT_INTERVAL_MS) {
-        _lastReconnectAttempt = now;
-        reconnect();
-    }
-}
-
-void RoverWiFiManager::reconnect() {
-    Serial.println("[WIFI] Reconnecting...");
-
-    WiFi.disconnect(true);
-
-    delay(1000);
-
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 bool RoverWiFiManager::isConnected() {
@@ -83,5 +84,9 @@ IPAddress RoverWiFiManager::getIP() {
 }
 
 int32_t RoverWiFiManager::getRSSI() {
+    if (WiFi.status() != WL_CONNECTED) {
+        return 0;
+    }
+
     return WiFi.RSSI();
 }

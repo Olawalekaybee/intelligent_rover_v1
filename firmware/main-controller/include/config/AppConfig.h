@@ -21,11 +21,11 @@
 #define ENABLE_MQ135_SENSOR      1
 #define ENABLE_ENS160_SENSOR     0
 
-#define ENABLE_GPS_MODULE        0
+#define ENABLE_GPS_MODULE        1
 #define ENABLE_CYD_DISPLAY       0
 #define ENABLE_BATTERY_MONITOR   0
 
-#define ENABLE_AI_EVENT_RECEIVER 1
+#define ENABLE_AI_EVENT_RECEIVER 0
 
 // ======================================================
 // Motor PWM
