@@ -4,22 +4,21 @@
 // Network Configuration — WiFi · ThingSpeak · OTA
 //
 // Sensitive credentials (SSID, passwords, API keys) stay in Secrets.h.
-// All structural / timing / addressing constants are defined here so every
-// network-layer number has one authoritative definition.
 // =============================================================================
 
 // ── WiFi ──────────────────────────────────────────────────────────────────────
 // Time to wait for association before giving up on a single attempt.
-#define WIFI_CONNECT_TIMEOUT_MS     6000
+// 10 s gives more room for the WPA handshake to complete between BT bursts.
+#define WIFI_CONNECT_TIMEOUT_MS     10000
 
-// Time between reconnect cycles when the link is down.
+// Time between full reconnect cycles when the link is down.
 #define WIFI_RECONNECT_INTERVAL_MS  20000
 
 // Number of auth attempts per reconnect cycle.
 // With Classic BT active, AUTH_EXPIRE on attempt 1 is common; attempt 2 wins.
 #define WIFI_MAX_ATTEMPTS           3
 
-// Pause between failed attempts — lets BT radio traffic subside.
+// Pause between failed attempts — lets BT radio traffic die down.
 #define WIFI_RETRY_DELAY_MS         1500
 
 // ── ThingSpeak ────────────────────────────────────────────────────────────────
