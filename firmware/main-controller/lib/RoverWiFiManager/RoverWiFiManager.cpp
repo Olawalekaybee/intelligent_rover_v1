@@ -4,75 +4,104 @@
 #include <esp_wifi.h>
 
 #include "config/AppConfig.h"
+#include "config/NetworkConfig.h"
 #include "config/Secrets.h"
 
-#define WIFI_RECONNECT_INTERVAL_MS 20000
-#define WIFI_CONNECT_TIMEOUT_MS    8000
+// =============================================================================
+// WiFi + Classic Bluetooth coexistence on ESP32
+//
+// RULE: esp_wifi_set_ps(WIFI_PS_MIN_MODEM) is MANDATORY whenever Classic BT
+// is active. The ESP-IDF coexistence scheduler requires modem sleep to
+// time-share the single 2.4 GHz radio. Calling WIFI_PS_NONE with BT active
+// causes an immediate abort() — it is a hard firmware restriction, not a bug.
+//
+// Offline resilience:
+//   reconnect() is fully bounded — it always returns within
+//   WIFI_MAX_ATTEMPTS × (WIFI_CONNECT_TIMEOUT_MS + WIFI_RETRY_DELAY_MS).
+//   With the defaults that is 3 × (6 s + 1.5 s) = ~22 s worst case.
+//   Only TaskNetworkService is affected during that window.
+//   TaskBluetoothControl, TaskSensorRead, and TaskGPSRead run uninterrupted
+//   on their own RTOS tasks throughout any WiFi outage.
+//
+// Auto-reconnect:
+//   update() is called from TaskNetworkService every 50 ms.
+//   When the link is down it checks WIFI_RECONNECT_INTERVAL_MS (20 s).
+//   As soon as a reconnect succeeds OTAUpdate and ThingSpeak resume
+//   automatically — no reboot needed.
+// =============================================================================
 
 void RoverWiFiManager::begin() {
     Serial.println("[WIFI] Initializing Wi-Fi");
 
     WiFi.mode(WIFI_STA);
-
-    // Required when Wi-Fi and Classic Bluetooth run together on ESP32
     WiFi.setSleep(true);
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);   // mandatory with Classic BT
     WiFi.setAutoReconnect(false);
     WiFi.persistent(false);
 
     _lastReconnectAttempt = 0;
-
     reconnect();
 }
 
 void RoverWiFiManager::update() {
-    if (WiFi.status() == WL_CONNECTED) {
-        return;
-    }
+    if (WiFi.status() == WL_CONNECTED) return;
 
     const uint32_t now = millis();
-
     if ((now - _lastReconnectAttempt) >= WIFI_RECONNECT_INTERVAL_MS) {
         _lastReconnectAttempt = now;
         reconnect();
     }
 }
 
+// -----------------------------------------------------------------------------
+// reconnect() — always returns; never blocks forever.
+//
+// AUTH_EXPIRE (reason 2) is expected on the first attempt when BT is active
+// because a BT radio burst can interrupt the 4-way handshake mid-flight.
+// Waiting WIFI_RETRY_DELAY_MS between attempts lets BT traffic die down so
+// the next attempt usually finds a quiet gap to complete authentication.
+// -----------------------------------------------------------------------------
 void RoverWiFiManager::reconnect() {
-    Serial.println("[WIFI] Attempting connection...");
+    for (uint8_t attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
 
-    WiFi.disconnect(false);
-    delay(100);
+        Serial.printf("[WIFI] Connecting to \"%s\" (attempt %u/%u)\n",
+                      WIFI_SSID, attempt, WIFI_MAX_ATTEMPTS);
 
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(true);
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        WiFi.disconnect(true);
+        delay(300);                           // let BT traffic settle
 
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        WiFi.mode(WIFI_STA);
+        WiFi.setSleep(true);
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);   // must stay enabled
 
-    const uint32_t startAttempt = millis();
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    while (WiFi.status() != WL_CONNECTED &&
-           (millis() - startAttempt) < WIFI_CONNECT_TIMEOUT_MS) {
-        delay(250);
-        Serial.print(".");
+        const uint32_t t0 = millis();
+        while (WiFi.status() != WL_CONNECTED &&
+               (millis() - t0) < WIFI_CONNECT_TIMEOUT_MS) {
+            delay(250);
+            Serial.print(".");
+        }
+        Serial.println();
+
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("[WIFI] Connected — IP: %s  RSSI: %d dBm\n",
+                          WiFi.localIP().toString().c_str(), WiFi.RSSI());
+            return;   // success
+        }
+
+        Serial.printf("[WIFI] Attempt %u failed\n", attempt);
+
+        if (attempt < WIFI_MAX_ATTEMPTS) {
+            Serial.printf("[WIFI] Retrying in %d ms...\n", WIFI_RETRY_DELAY_MS);
+            delay(WIFI_RETRY_DELAY_MS);
+        }
     }
 
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("[WIFI] Connected");
-
-        Serial.print("[WIFI] IP Address: ");
-        Serial.println(WiFi.localIP());
-
-        Serial.print("[WIFI] RSSI: ");
-        Serial.print(WiFi.RSSI());
-        Serial.println(" dBm");
-    } else {
-        Serial.println("[WIFI] Connection failed. System will continue offline.");
-    }
+    // All attempts exhausted — system continues offline.
+    // TaskBluetoothControl, TaskSensorRead, TaskGPSRead are unaffected.
+    // update() will try again after WIFI_RECONNECT_INTERVAL_MS.
+    Serial.println("[WIFI] Offline — all tasks continue. Will retry in 20 s");
 }
 
 bool RoverWiFiManager::isConnected() {
@@ -84,9 +113,5 @@ IPAddress RoverWiFiManager::getIP() {
 }
 
 int32_t RoverWiFiManager::getRSSI() {
-    if (WiFi.status() != WL_CONNECTED) {
-        return 0;
-    }
-
-    return WiFi.RSSI();
+    return (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
 }

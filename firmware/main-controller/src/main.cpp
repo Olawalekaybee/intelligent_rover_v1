@@ -8,6 +8,8 @@
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
+#include "config/NetworkConfig.h"
+#include "constants/SystemConstants.h"
 #include "pins/PinMap.h"
 
 #include "MotorControl.h"
@@ -141,11 +143,11 @@ void setup() {
     xTaskCreatePinnedToCore(
         TaskBluetoothControl,
         "BT_Control",
-        4096,
+        STACK_BT_CONTROL,
         nullptr,
-        4,
+        PRIORITY_BT_CONTROL,
         nullptr,
-        1
+        CORE_BT_MOTOR
     );
 #endif
 
@@ -153,11 +155,11 @@ void setup() {
     xTaskCreatePinnedToCore(
         TaskOTAService,
         "OTA_Service",
-        8192,
+        STACK_OTA_SERVICE,
         nullptr,
-        6,
+        PRIORITY_OTA_SERVICE,
         nullptr,
-        0
+        CORE_SERVICES
     );
 #endif
 
@@ -165,66 +167,66 @@ void setup() {
     xTaskCreatePinnedToCore(
         TaskAIEventRead,
         "AI_Event_Read",
-        4096,
+        STACK_AI_EVENT_READ,
         nullptr,
-        3,
+        PRIORITY_AI_EVENT_READ,
         nullptr,
-        1
+        CORE_AI
     );
 #endif
 
     xTaskCreatePinnedToCore(
         TaskSensorRead,
         "Sensor_Read",
-        4096,
+        STACK_SENSOR_READ,
         nullptr,
-        2,
+        PRIORITY_SENSOR_READ,
         nullptr,
-        0
+        CORE_SERVICES
     );
 
 #if ENABLE_GPS_MODULE
     xTaskCreatePinnedToCore(
         TaskGPSRead,
         "GPS_Read",
-        4096,
+        STACK_GPS_READ,
         nullptr,
-        2,
+        PRIORITY_GPS_READ,
         nullptr,
-        0
+        CORE_SERVICES
     );
 #endif
 
     xTaskCreatePinnedToCore(
         TaskNetworkService,
         "Network_Service",
-        8192,
+        STACK_NETWORK_SERVICE,
         nullptr,
-        2,
+        PRIORITY_NETWORK_SERVICE,
         nullptr,
-        0
+        CORE_SERVICES
     );
 
 #if ENABLE_CYD_DISPLAY
     xTaskCreatePinnedToCore(
         TaskDisplayService,
         "Display_Service",
-        4096,
+        STACK_DISPLAY_SERVICE,
         nullptr,
-        1,
+        PRIORITY_DISPLAY_SERVICE,
         nullptr,
-        0
+        CORE_SERVICES
     );
 #endif
 
     xTaskCreatePinnedToCore(
         TaskStatusLED,
         "Status_LED",
-        2048,
+        STACK_STATUS_LED,
         nullptr,
-        1,
+        PRIORITY_STATUS_LED,
         nullptr,
-        0
+        CORE_SERVICES
     );
 
     Serial.printf("[SYSTEM] Rover ready. Default speed: %d\n", currentSpeed);

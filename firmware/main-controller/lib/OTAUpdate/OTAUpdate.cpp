@@ -3,68 +3,54 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 
+#include "config/NetworkConfig.h"
 #include "config/Secrets.h"
 
 void OTAUpdate::begin() {
-    if (_started) {
-        return;
-    }
+    if (_started) return;
 
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[OTA] Wi-Fi not connected, OTA not started");
+        Serial.println("[OTA] Wi-Fi not connected — will retry when link is up");
         return;
     }
 
     ArduinoOTA.setHostname(OTA_HOSTNAME);
     ArduinoOTA.setPassword(OTA_PASSWORD);
-    ArduinoOTA.setPort(3232);
+    ArduinoOTA.setPort(OTA_PORT);
 
     ArduinoOTA.onStart([]() {
         Serial.println();
         Serial.println("[OTA] Update started");
-
-        if (ArduinoOTA.getCommand() == U_FLASH) {
-            Serial.println("[OTA] Update type: firmware");
-        } else {
-            Serial.println("[OTA] Update type: filesystem");
-        }
+        Serial.println(ArduinoOTA.getCommand() == U_FLASH
+                       ? "[OTA] Type: firmware"
+                       : "[OTA] Type: filesystem");
     });
 
     ArduinoOTA.onEnd([]() {
         Serial.println();
-        Serial.println("[OTA] Update finished");
-        Serial.println("[OTA] Rebooting...");
+        Serial.println("[OTA] Update finished — rebooting");
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
         static uint8_t lastPercent = 255;
-
         uint8_t percent = (progress * 100) / total;
-
         if (percent != lastPercent) {
             lastPercent = percent;
-            Serial.printf("[OTA] Progress: %u%%\n", percent);
+            Serial.printf("[OTA] %u%%\r", percent);
         }
-
         delay(1);
         yield();
     });
 
     ArduinoOTA.onError([](ota_error_t error) {
         Serial.printf("[OTA] Error[%u]: ", error);
-
-        if (error == OTA_AUTH_ERROR) {
-            Serial.println("Authentication failed");
-        } else if (error == OTA_BEGIN_ERROR) {
-            Serial.println("Begin failed");
-        } else if (error == OTA_CONNECT_ERROR) {
-            Serial.println("Connect failed");
-        } else if (error == OTA_RECEIVE_ERROR) {
-            Serial.println("Receive failed");
-        } else if (error == OTA_END_ERROR) {
-            Serial.println("End failed");
-        } else {
-            Serial.println("Unknown error");
+        switch (error) {
+            case OTA_AUTH_ERROR:    Serial.println("Authentication failed"); break;
+            case OTA_BEGIN_ERROR:   Serial.println("Begin failed");          break;
+            case OTA_CONNECT_ERROR: Serial.println("Connect failed");        break;
+            case OTA_RECEIVE_ERROR: Serial.println("Receive failed");        break;
+            case OTA_END_ERROR:     Serial.println("End failed");            break;
+            default:                Serial.println("Unknown error");          break;
         }
     });
 
@@ -72,30 +58,19 @@ void OTAUpdate::begin() {
     ArduinoOTA.begin();
 
     delay(100);
-
     _started = true;
 
-    Serial.println("[OTA] OTA service started");
-    Serial.println("[OTA] OTA Ready");
-
-    Serial.print("[OTA] Hostname: ");
-    Serial.println(OTA_HOSTNAME);
-
-    Serial.print("[OTA] IP: ");
-    Serial.println(WiFi.localIP());
+    Serial.printf("[OTA] Ready — hostname: %s.local  IP: %s  port: %d\n",
+                  OTA_HOSTNAME, WiFi.localIP().toString().c_str(), OTA_PORT);
 }
 
 void OTAUpdate::handle() {
+    // Auto-start whenever WiFi comes (back) up
     if (!_started) {
-        if (WiFi.status() == WL_CONNECTED) {
-            begin();
-        }
-
+        if (WiFi.status() == WL_CONNECTED) begin();
         return;
     }
-
     ArduinoOTA.handle();
-
     delay(1);
     yield();
 }
