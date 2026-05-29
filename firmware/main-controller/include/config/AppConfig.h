@@ -25,7 +25,7 @@
 #define ENABLE_CYD_DISPLAY       0
 #define ENABLE_BATTERY_MONITOR   0
 
-#define ENABLE_AI_EVENT_RECEIVER 0
+#define ENABLE_AI_EVENT_RECEIVER 1   // I2C master on Wire1 (GPIO4/13)
 
 // ======================================================
 // Motor PWM
@@ -52,7 +52,7 @@
 
 #define SENSOR_READ_INTERVAL_MS 2000
 #define GPS_READ_INTERVAL_MS 1000
-#define AI_EVENT_READ_INTERVAL_MS 20
+#define AI_EVENT_READ_INTERVAL_MS 200  // matches I2C poll rate
 #define DISPLAY_UPDATE_INTERVAL_MS 1000
 #define THINGSPEAK_UPLOAD_INTERVAL_MS 15000
 #define SYSTEM_HEALTH_INTERVAL_MS 5000
@@ -79,8 +79,10 @@
 // AI UART Event Protocol
 // ======================================================
 
-#define AI_UART_BAUD_RATE 115200
-#define AI_EVENT_BUFFER_SIZE 256
+#define AI_I2C_SLAVE_ADDR     0x55   // XIAO I2C slave address
+#define AI_I2C_PACKET_SIZE    27    // sizeof(AIPacket) — 1+1+12+2+2+2+2+4+1
+#define AI_I2C_POLL_MS        200   // poll interval ms
+#define AI_HEARTBEAT_TIMEOUT_MS 30000  // ms before marking AI node offline
 
 // ======================================================
 // MQ135 Gas Sensor

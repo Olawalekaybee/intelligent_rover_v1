@@ -30,7 +30,8 @@ struct TelemetryData {
     int8_t wifiRssi = 0;
 
     // AI vision event from XIAO/Grove Vision AI V2
-    bool aiDetected = false;
+    bool    aiDetected   = false;
+    bool    aiNodeOnline = false;    // heartbeat received recently
     char aiLabel[16] = {0};
     float aiConfidence = 0.0f;
     int aiX = 0;

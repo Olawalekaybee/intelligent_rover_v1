@@ -8,10 +8,12 @@
 #define PIN_GPS_RX 16
 #define PIN_GPS_TX 17
 
-// XIAO AI node UART bridge
-// XIAO TX -> ESP32 RX, XIAO RX <- ESP32 TX
-#define PIN_AI_UART_RX 4
-#define PIN_AI_UART_TX 13
+// XIAO AI node I2C bridge (Wire1 — separate from sensor bus on Wire0)
+// XIAO GPIO3 (D2) ↔ ESP32 GPIO4  (SDA1)
+// XIAO GPIO4 (D3) ↔ ESP32 GPIO13 (SCL1)
+// 4.7 kΩ pull-ups to 3.3 V required on both lines
+#define PIN_AI_I2C_SDA  4    // Wire1 SDA — freed from old UART RX
+#define PIN_AI_I2C_SCL  13   // Wire1 SCL — freed from old UART TX
 
 // MQ-135 analog input
 #define PIN_MQ135_ADC 34

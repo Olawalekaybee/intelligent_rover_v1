@@ -1,47 +1,33 @@
 #include "interfaces/DetectionPipeline.h"
-
 #include "config/AppConfig.h"
 
-#define AI_HEARTBEAT_INTERVAL_MS 10000
-
-void DetectionPipeline::begin(
-    AIInference *ai,
-    UARTBridge *uart,
-    WiFiBridge *wifi
-) {
-    _ai = ai;
-    _uart = uart;
+void DetectionPipeline::begin(AIInference *ai, I2CBridge *i2c, WiFiBridge *wifi) {
+    _ai   = ai;
+    _i2c  = i2c;
     _wifi = wifi;
-
-    Serial.println("[PIPELINE] Detection pipeline initialized");
+    Serial.println("[PIPELINE] Detection pipeline initialized (I2C bridge)");
 }
 
-void DetectionPipeline::update() {
-    if (_ai == nullptr || _uart == nullptr || _wifi == nullptr) {
-        return;
-    }
-
-    DetectionResult result = _ai->update();
-
-    if (result.detected) {
-        _uart->sendDetection(
-            result.label,
-            result.confidence,
-            result.x,
-            result.y,
-            result.w,
-            result.h
-        );
-
-        _wifi->publishDetection(result);
-    }
-
+void DetectionPipeline::onDetection(const DetectionResult &result) {
+    if (!_i2c || !_wifi) return;
     uint32_t now = millis();
+    if ((now - _lastDetectionMs) < DETECTION_COOLDOWN_MS) return;
+    _lastDetectionMs = now;
 
-    if ((now - _lastHeartbeatMs) >= AI_HEARTBEAT_INTERVAL_MS) {
+    _i2c->updateDetection(result);
+    _wifi->publishDetection(result);
+
+    Serial.printf("[PIPELINE] %s  conf=%.2f  box=[%d,%d,%d,%d]\n",
+                  result.label.c_str(), result.confidence,
+                  result.x, result.y, result.w, result.h);
+}
+
+void DetectionPipeline::tickHeartbeat() {
+    if (!_i2c || !_wifi) return;
+    uint32_t now = millis();
+    if ((now - _lastHeartbeatMs) >= HEARTBEAT_INTERVAL_MS) {
         _lastHeartbeatMs = now;
-
-        _uart->sendHeartbeat();
+        _i2c->sendHeartbeat();
         _wifi->publishHeartbeat();
     }
 }

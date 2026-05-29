@@ -1,16 +1,10 @@
 #include "interfaces/AIInference.h"
 #include "config/AppConfig.h"
+#include <mbedtls/base64.h>
 
 // =============================================================================
-// Class label map — matches the model loaded on Grove Vision AI V2
-//
-// Default Seeed models:
-//   Person detection  → target 0 = "person"
-//   Face detection    → target 0 = "face"
-//   COCO 80-class     → standard COCO labels
-//
-// Flash your model via SenseCraft AI: https://sensecraft.seeed.cc/ai
-// Update this map to match your deployed model.
+// Class label map — update to match the model on your Grove Vision AI V2
+// Flash models at: https://sensecraft.seeed.cc/ai
 // =============================================================================
 String AIInference::classLabel(int target) {
     switch (target) {
@@ -20,7 +14,7 @@ String AIInference::classLabel(int target) {
         case 3:  return "animal";
         case 4:  return "fire";
         case 5:  return "smoke";
-        default: return "unknown_" + String(target);
+        default: return "object_" + String(target);
     }
 }
 
@@ -30,28 +24,44 @@ bool AIInference::begin() {
     Wire.setClock(GROVE_I2C_FREQ);
 
     if (!_ai.begin(&Wire)) {
-        Serial.println("[AI] Grove Vision AI V2 NOT found on I2C");
-        Serial.println("[AI] Check wiring: SDA=GPIO5 SCL=GPIO6");
+        Serial.println("[AI] Grove Vision AI V2 not found");
+        Serial.printf("[AI] Check: SDA=GPIO%d  SCL=GPIO%d\n",
+                      GROVE_SDA_PIN, GROVE_SCL_PIN);
         _ready = false;
         return false;
     }
 
+    // Allocate frame buffer from PSRAM
+    if (psramFound()) {
+        _frameBuffer = (uint8_t*)ps_malloc(MAX_FRAME_BUFFER_SIZE);
+        if (_frameBuffer) {
+            Serial.printf("[AI] Frame buffer: %d KB in PSRAM\n",
+                          MAX_FRAME_BUFFER_SIZE / 1024);
+        } else {
+            Serial.println("[AI] PSRAM alloc failed — streaming disabled");
+        }
+    } else {
+        Serial.println("[AI] No PSRAM — streaming disabled");
+    }
+
     _ready = true;
-    Serial.println("[AI] Grove Vision AI V2 initialized");
-    Serial.println("[AI] P5V04A Sunny camera active");
+    Serial.println("[AI] Grove Vision AI V2 ready");
+    Serial.println("[AI] Camera: P5V04A Sunny");
     return true;
 }
 
 // =============================================================================
-// update() — poll Grove Vision AI V2 for latest detection results
+// update() — one inference cycle
 //
-// Returns the highest-confidence detection above MIN_CONFIDENCE_SCORE.
-// Returns empty DetectionResult (detected=false) if nothing found.
+// captureFrame=false: invoke without image (fast, detection only)
+// captureFrame=true : invoke with show=true — gets JPEG with bounding boxes
+//                     drawn on it, decodes from base64, stores in _frameBuffer
 // =============================================================================
-DetectionResult AIInference::update() {
+DetectionResult AIInference::update(bool captureFrame) {
     DetectionResult result;
 
     if (!_ready) {
+        // Retry I2C init every 5 s
         if ((millis() - _lastRetryMs) > 5000) {
             _lastRetryMs = millis();
             begin();
@@ -59,14 +69,20 @@ DetectionResult AIInference::update() {
         return result;
     }
 
-    // invoke(1, false, false) = 1 frame, no filter, non-blocking
-    if (_ai.invoke(1, false, false) != 0) {
-        return result;  // Not ready yet — will retry next call
+    // invoke(times, filter, show)
+    //   show=true  → Grove AI V2 sends back the frame with overlaid boxes
+    //   show=false → detection data only (faster, less I2C traffic)
+    if (_ai.invoke(1, false, captureFrame) != 0) {
+        return result;
     }
 
-    // ── Bounding box detections (object detection model) ──────────────────
+    // ── Decode JPEG frame ─────────────────────────────────────────────────
+    if (captureFrame && _frameBuffer && !_ai.last_image().isEmpty()) {
+        decodeFrame(_ai.last_image());
+    }
+
+    // ── Bounding box results (object detection / YOLO models) ─────────────
     if (!_ai.boxes().empty()) {
-        // Find highest confidence detection above threshold
         int bestIdx   = -1;
         int bestScore = MIN_CONFIDENCE_SCORE;
 
@@ -78,38 +94,49 @@ DetectionResult AIInference::update() {
         }
 
         if (bestIdx >= 0) {
-            const auto &box = _ai.boxes()[bestIdx];
-            result.detected    = true;
-            result.label       = classLabel(box.target);
-            result.confidence  = box.score / 100.0f;
-            result.x           = box.x;
-            result.y           = box.y;
-            result.w           = box.w;
-            result.h           = box.h;
-
-            Serial.printf("[AI] Detected: %s  conf=%.2f  box=[%d,%d,%d,%d]\n",
-                          result.label.c_str(), result.confidence,
-                          result.x, result.y, result.w, result.h);
+            const auto &box   = _ai.boxes()[bestIdx];
+            result.detected   = true;
+            result.label      = classLabel(box.target);
+            result.confidence = box.score / 100.0f;
+            result.x = box.x;  result.y = box.y;
+            result.w = box.w;  result.h = box.h;
         }
         return result;
     }
 
-    // ── Classification results (classification model) ─────────────────────
+    // ── Classification results (MobileNet models) ─────────────────────────
     if (!_ai.classes().empty()) {
         const auto &cls = _ai.classes()[0];
         if (cls.score >= MIN_CONFIDENCE_SCORE) {
             result.detected   = true;
             result.label      = classLabel(cls.target);
             result.confidence = cls.score / 100.0f;
-            result.x          = 0;
-            result.y          = 0;
-            result.w          = 0;
-            result.h          = 0;
-
-            Serial.printf("[AI] Class: %s  conf=%.2f\n",
-                          result.label.c_str(), result.confidence);
         }
     }
 
     return result;
+}
+
+// =============================================================================
+// decodeFrame — base64 → raw JPEG bytes using mbedTLS (built into ESP-IDF)
+// =============================================================================
+bool AIInference::decodeFrame(const String &b64) {
+    if (b64.isEmpty() || !_frameBuffer) return false;
+
+    int ret = mbedtls_base64_decode(
+        _frameBuffer,
+        MAX_FRAME_BUFFER_SIZE,
+        &_frameLen,
+        (const unsigned char*)b64.c_str(),
+        b64.length()
+    );
+
+    if (ret != 0) {
+        Serial.printf("[AI] Base64 decode error: %d\n", ret);
+        _frameLen = 0;
+        return false;
+    }
+
+    _hasNewFrame = true;
+    return true;
 }

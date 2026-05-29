@@ -1,32 +1,37 @@
 // =============================================================================
-// Intelligent Rover — AI Camera Node
-// Board  : Seeed XIAO ESP32-S3 Sense (no camera attachment)
+// Intelligent Rover — AI Camera Node  v1.4.0
+// Board  : Seeed XIAO ESP32-S3 Sense
 // AI     : Grove Vision AI V2 (Himax WE2) + P5V04A Sunny camera
-// Comms  : I2C (Grove → XIAO) + UART (XIAO → ESP32 main) + WiFi
+// Comms  : Wire0 (GPIO5/6)  → Grove Vision AI V2 (SSCMA)
+//          Wire1 (GPIO3/4)  → I2C slave to ESP32 main at 0x55
+//          WiFi             → MJPEG stream + OTA
 // =============================================================================
 
 #include <Arduino.h>
 #include "config/AppConfig.h"
 
 #include "interfaces/AIInference.h"
-#include "interfaces/UARTBridge.h"
-#include "interfaces/WiFiBridge.h"
 #include "interfaces/DetectionPipeline.h"
+#include "interfaces/WiFiBridge.h"
+#include "I2CBridge.h"
+#include "StreamServer.h"
 
 // =============================================================================
 // Subsystem instances
 // =============================================================================
 AIInference       aiInference;
-UARTBridge        uartBridge;
+I2CBridge         i2cBridge;
 WiFiBridge        wifiBridge;
 DetectionPipeline detectionPipeline;
+StreamServer      streamServer;
 
 // =============================================================================
-// RTOS task declarations
+// Task declarations
 // =============================================================================
 void TaskDetectionPipeline(void *pvParameters);
-void TaskWiFiBridge(void *pvParameters);
-void TaskStatusLED(void *pvParameters);
+void TaskStreamServer     (void *pvParameters);
+void TaskWiFiBridge       (void *pvParameters);
+void TaskStatusLED        (void *pvParameters);
 
 // =============================================================================
 // setup()
@@ -36,100 +41,111 @@ void setup() {
     delay(1000);
 
     Serial.println();
-    Serial.println("===========================================");
+    Serial.println("============================================");
     Serial.println("  Intelligent Rover — AI Camera Node");
     Serial.println("  XIAO ESP32-S3 + Grove Vision AI V2");
     Serial.println("  Camera: P5V04A Sunny");
-    Serial.println("===========================================");
+    Serial.println("  Bridge: I2C slave 0x55 (GPIO3/4)");
+    Serial.println("============================================");
+    Serial.printf("[SYSTEM] PSRAM: %s (%lu bytes)\n",
+                  psramFound() ? "found" : "NOT found",
+                  ESP.getFreePsram());
 
     pinMode(STATUS_LED_PIN, OUTPUT);
 
-    // Initialize in order: AI → UART → WiFi → Pipeline
+    // Init order: AI (Wire0) → I2C bridge (Wire1) → WiFi → pipeline
     bool aiOk = aiInference.begin();
-    uartBridge.begin();
+    i2cBridge.begin();
     wifiBridge.begin();
+    detectionPipeline.begin(&aiInference, &i2cBridge, &wifiBridge);
 
-    detectionPipeline.begin(&aiInference, &uartBridge, &wifiBridge);
+    if (wifiBridge.isConnected()) {
+        streamServer.begin(STREAM_SERVER_PORT);
+    }
 
     if (!aiOk) {
         Serial.println("[SYSTEM] WARNING: Grove Vision AI V2 not detected");
-        Serial.println("[SYSTEM] Check I2C wiring: SDA=GPIO5, SCL=GPIO6");
-        Serial.println("[SYSTEM] Continuing — will retry in detection loop");
+        Serial.println("[SYSTEM] Check: SDA=GPIO5  SCL=GPIO6");
     }
 
-    // TaskDetectionPipeline on Core 1 (higher priority — time-sensitive)
-    xTaskCreatePinnedToCore(
-        TaskDetectionPipeline, "DetectionPipeline",
-        8192, nullptr, 3, nullptr, 1);
-
-    // TaskWiFiBridge on Core 0 (WiFi stack prefers Core 0)
-    xTaskCreatePinnedToCore(
-        TaskWiFiBridge, "WiFiBridge",
-        4096, nullptr, 2, nullptr, 0);
-
-    // TaskStatusLED on Core 0
-    xTaskCreatePinnedToCore(
-        TaskStatusLED, "StatusLED",
-        2048, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(TaskDetectionPipeline, "AI_Pipeline",
+                            8192, nullptr, 3, nullptr, 1);
+    xTaskCreatePinnedToCore(TaskStreamServer,      "Stream_Srv",
+                            8192, nullptr, 2, nullptr, 0);
+    xTaskCreatePinnedToCore(TaskWiFiBridge,        "WiFi_Bridge",
+                            4096, nullptr, 2, nullptr, 0);
+    xTaskCreatePinnedToCore(TaskStatusLED,         "Status_LED",
+                            2048, nullptr, 1, nullptr, 0);
 
     Serial.println("[SYSTEM] AI camera node ready");
-    Serial.printf("[SYSTEM] Free heap: %lu bytes\n", ESP.getFreeHeap());
+    Serial.printf("[SYSTEM] Free heap: %lu B\n", ESP.getFreeHeap());
 }
 
-void loop() {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-}
+void loop() { vTaskDelay(pdMS_TO_TICKS(1000)); }
 
 // =============================================================================
 // TaskDetectionPipeline — Core 1, Priority 3
-// Polls Grove Vision AI V2 and routes results over UART + WiFi
 // =============================================================================
 void TaskDetectionPipeline(void *pvParameters) {
     while (true) {
-        detectionPipeline.update();
+        // Always capture frames so /capture endpoint always has fresh data.
+        // hasClients() only tracks MJPEG clients; periodic /capture requests
+        // are one-shot and never increment the client count.
+        bool needFrame = aiInference.isReady();
+        DetectionResult result = aiInference.update(needFrame);
+
+        if (needFrame && aiInference.hasNewFrame()) {
+            streamServer.pushFrame(aiInference.getFrameData(),
+                                   aiInference.getFrameLen());
+            aiInference.clearFrame();
+        }
+
+        if (result.detected) {
+            detectionPipeline.onDetection(result);
+        }
+        detectionPipeline.tickHeartbeat();
+
         vTaskDelay(pdMS_TO_TICKS(INFERENCE_INTERVAL_MS));
     }
 }
 
 // =============================================================================
+// TaskStreamServer — Core 0, Priority 2
+// =============================================================================
+void TaskStreamServer(void *pvParameters) {
+    while (true) {
+        if (wifiBridge.isConnected()) streamServer.handle();
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+// =============================================================================
 // TaskWiFiBridge — Core 0, Priority 2
-// Maintains WiFi connection and handles OTA update requests
 // =============================================================================
 void TaskWiFiBridge(void *pvParameters) {
+    bool streamStarted = false;
     while (true) {
         wifiBridge.update();
+        if (wifiBridge.isConnected() && !streamStarted) {
+            streamStarted = true;
+            streamServer.begin(STREAM_SERVER_PORT);
+        }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 // =============================================================================
 // TaskStatusLED — Core 0, Priority 1
-// Blink pattern:  WiFi connected = slow (900ms off / 100ms on)
-//                 No WiFi        = fast (200ms on / 200ms off)
 // =============================================================================
 void TaskStatusLED(void *pvParameters) {
     while (true) {
         bool wifi = wifiBridge.isConnected();
         bool ai   = aiInference.isReady();
 
-        if (wifi && ai) {
-            // Both ready: slow heartbeat
-            digitalWrite(STATUS_LED_PIN, HIGH);
-            vTaskDelay(pdMS_TO_TICKS(100));
-            digitalWrite(STATUS_LED_PIN, LOW);
-            vTaskDelay(pdMS_TO_TICKS(1900));
-        } else if (wifi && !ai) {
-            // WiFi ok, AI not ready: medium blink
-            digitalWrite(STATUS_LED_PIN, HIGH);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            digitalWrite(STATUS_LED_PIN, LOW);
-            vTaskDelay(pdMS_TO_TICKS(800));
-        } else {
-            // No WiFi: fast blink
-            digitalWrite(STATUS_LED_PIN, HIGH);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            digitalWrite(STATUS_LED_PIN, LOW);
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
+        uint32_t on  = wifi && ai ? 100  : wifi ? 200  : 200;
+        uint32_t off = wifi && ai ? 1900 : wifi ? 800  : 200;
+
+        digitalWrite(STATUS_LED_PIN, HIGH); vTaskDelay(pdMS_TO_TICKS(on));
+        digitalWrite(STATUS_LED_PIN, LOW);  vTaskDelay(pdMS_TO_TICKS(off));
     }
 }
