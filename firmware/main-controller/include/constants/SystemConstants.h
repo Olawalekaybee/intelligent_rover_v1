@@ -24,7 +24,7 @@
 #define STACK_BT_CONTROL        4096
 #define STACK_OTA_SERVICE       8192    // ArduinoOTA uses ~6 KB internally
 #define STACK_AI_EVENT_READ     4096
-#define STACK_SENSOR_READ       4096
+#define STACK_SENSOR_READ       6144    // increased: dtoa() float→string needs heap; fragmented by BT+WiFi
 #define STACK_GPS_READ          4096
 #define STACK_NETWORK_SERVICE   8192    // WiFi + HTTPClient needs headroom
 #define STACK_DISPLAY_SERVICE   4096

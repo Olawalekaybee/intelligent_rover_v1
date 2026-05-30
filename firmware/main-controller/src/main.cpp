@@ -1,15 +1,11 @@
 // =============================================================================
 // Intelligent Rover — ESP32 Main Controller
-// Roles: rover movement, Bluetooth control, AHT20, MQ135,
-//        ThingSpeak, OTA, optional GPS, AI-event reception, CYD display bridge.
 // =============================================================================
 
 #include <Arduino.h>
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
-#include "config/NetworkConfig.h"
-#include "constants/SystemConstants.h"
 #include "pins/PinMap.h"
 
 #include "MotorControl.h"
@@ -43,10 +39,6 @@ void TaskBluetoothControl(void *pvParameters);
 void TaskSensorRead(void *pvParameters);
 void TaskNetworkService(void *pvParameters);
 void TaskStatusLED(void *pvParameters);
-
-#if ENABLE_OTA_UPDATE
-void TaskOTAService(void *pvParameters);
-#endif
 
 #if ENABLE_GPS_MODULE
 void TaskGPSRead(void *pvParameters);
@@ -137,29 +129,48 @@ void setup() {
     Serial.println("[DISPLAY] CYD display disabled");
 #endif
 
+    Serial.println("========== FEATURE STATUS ==========");
+    Serial.printf("ENABLE_WIFI_TELEMETRY: %d\n", ENABLE_WIFI_TELEMETRY);
+    Serial.printf("ENABLE_THINGSPEAK_UPLOAD: %d\n", ENABLE_THINGSPEAK_UPLOAD);
+    Serial.printf("ENABLE_OTA_UPDATE: %d\n", ENABLE_OTA_UPDATE);
+    Serial.printf("ENABLE_AI_EVENT_RECEIVER: %d\n", ENABLE_AI_EVENT_RECEIVER);
+    Serial.printf("ENABLE_GPS_MODULE: %d\n", ENABLE_GPS_MODULE);
+    Serial.printf("ENABLE_CYD_DISPLAY: %d\n", ENABLE_CYD_DISPLAY);
+    Serial.println("====================================");
+
     lastCommandTime = millis();
 
 #if ENABLE_BLUETOOTH_CONTROL
     xTaskCreatePinnedToCore(
         TaskBluetoothControl,
         "BT_Control",
-        STACK_BT_CONTROL,
+        4096,
         nullptr,
-        PRIORITY_BT_CONTROL,
+        4,
         nullptr,
-        CORE_BT_MOTOR
+        1
     );
 #endif
 
-#if ENABLE_OTA_UPDATE
     xTaskCreatePinnedToCore(
-        TaskOTAService,
-        "OTA_Service",
-        STACK_OTA_SERVICE,
+        TaskSensorRead,
+        "Sensor_Read",
+        4096,
         nullptr,
-        PRIORITY_OTA_SERVICE,
+        2,
         nullptr,
-        CORE_SERVICES
+        0
+    );
+
+#if ENABLE_GPS_MODULE
+    xTaskCreatePinnedToCore(
+        TaskGPSRead,
+        "GPS_Read",
+        4096,
+        nullptr,
+        2,
+        nullptr,
+        0
     );
 #endif
 
@@ -167,66 +178,44 @@ void setup() {
     xTaskCreatePinnedToCore(
         TaskAIEventRead,
         "AI_Event_Read",
-        STACK_AI_EVENT_READ,
+        4096,
         nullptr,
-        PRIORITY_AI_EVENT_READ,
+        2,
         nullptr,
-        CORE_AI
-    );
-#endif
-
-    xTaskCreatePinnedToCore(
-        TaskSensorRead,
-        "Sensor_Read",
-        STACK_SENSOR_READ,
-        nullptr,
-        PRIORITY_SENSOR_READ,
-        nullptr,
-        CORE_SERVICES
-    );
-
-#if ENABLE_GPS_MODULE
-    xTaskCreatePinnedToCore(
-        TaskGPSRead,
-        "GPS_Read",
-        STACK_GPS_READ,
-        nullptr,
-        PRIORITY_GPS_READ,
-        nullptr,
-        CORE_SERVICES
+        1
     );
 #endif
 
     xTaskCreatePinnedToCore(
         TaskNetworkService,
         "Network_Service",
-        STACK_NETWORK_SERVICE,
+        8192,
         nullptr,
-        PRIORITY_NETWORK_SERVICE,
+        3,
         nullptr,
-        CORE_SERVICES
+        0
     );
 
 #if ENABLE_CYD_DISPLAY
     xTaskCreatePinnedToCore(
         TaskDisplayService,
         "Display_Service",
-        STACK_DISPLAY_SERVICE,
+        4096,
         nullptr,
-        PRIORITY_DISPLAY_SERVICE,
+        1,
         nullptr,
-        CORE_SERVICES
+        0
     );
 #endif
 
     xTaskCreatePinnedToCore(
         TaskStatusLED,
         "Status_LED",
-        STACK_STATUS_LED,
+        2048,
         nullptr,
-        PRIORITY_STATUS_LED,
+        1,
         nullptr,
-        CORE_SERVICES
+        0
     );
 
     Serial.printf("[SYSTEM] Rover ready. Default speed: %d\n", currentSpeed);
@@ -235,16 +224,6 @@ void setup() {
 void loop() {
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
-
-#if ENABLE_OTA_UPDATE
-void TaskOTAService(void *pvParameters) {
-    while (true) {
-        otaUpdate.handle();
-
-        vTaskDelay(pdMS_TO_TICKS(2));
-    }
-}
-#endif
 
 void TaskBluetoothControl(void *pvParameters) {
     char speedBuf[8];
@@ -350,22 +329,6 @@ void TaskBluetoothControl(void *pvParameters) {
                     Serial.println("[BT] STOP");
                     break;
 
-                case 'W':
-                    Serial.println("[BT] Light ON");
-                    break;
-
-                case 'w':
-                    Serial.println("[BT] Light OFF");
-                    break;
-
-                case 'U':
-                    Serial.println("[BT] Horn ON");
-                    break;
-
-                case 'u':
-                    Serial.println("[BT] Horn OFF");
-                    break;
-
                 default:
                     break;
             }
@@ -393,10 +356,6 @@ void TaskSensorRead(void *pvParameters) {
         sensorSnapshot.ens160Ready = false;
 #endif
 
-#if !ENABLE_BATTERY_MONITOR
-        sensorSnapshot.batteryVoltage = 0.0f;
-#endif
-
         updateTelemetry([&sensorSnapshot](TelemetryData &data) {
             data.temperatureC = sensorSnapshot.temperatureC;
             data.humidityPercent = sensorSnapshot.humidityPercent;
@@ -412,28 +371,28 @@ void TaskSensorRead(void *pvParameters) {
         });
 
         Serial.println("[SENSOR] -------------------");
-        Serial.printf("[SENSOR] Temp: %.2f C  Humidity: %.2f %%\n",
-                      sensorSnapshot.temperatureC,
-                      sensorSnapshot.humidityPercent);
+        Serial.printf(
+            "[SENSOR] Temp: %.2f C  Humidity: %.2f %%\n",
+            sensorSnapshot.temperatureC,
+            sensorSnapshot.humidityPercent
+        );
 
 #if ENABLE_ENS160_SENSOR
-        Serial.printf("[SENSOR] eCO2: %u ppm  TVOC: %u ppb  AQI: %u\n",
-                      sensorSnapshot.eco2Ppm,
-                      sensorSnapshot.tvocPpb,
-                      sensorSnapshot.airQualityIndex);
+        Serial.printf(
+            "[SENSOR] eCO2: %u ppm  TVOC: %u ppb  AQI: %u\n",
+            sensorSnapshot.eco2Ppm,
+            sensorSnapshot.tvocPpb,
+            sensorSnapshot.airQualityIndex
+        );
 #else
         Serial.println("[SENSOR] ENS160 disabled");
 #endif
 
-        Serial.printf("[SENSOR] MQ135: %u raw / %.2f V\n",
-                      sensorSnapshot.mq135Raw,
-                      sensorSnapshot.mq135Voltage);
-
-#if ENABLE_BATTERY_MONITOR
-        Serial.printf("[SENSOR] Battery: %.2f V\n", sensorSnapshot.batteryVoltage);
-#else
-        Serial.println("[SENSOR] Battery monitor disabled");
-#endif
+        Serial.printf(
+            "[SENSOR] MQ135: %u raw / %.2f V\n",
+            sensorSnapshot.mq135Raw,
+            sensorSnapshot.mq135Voltage
+        );
 
         vTaskDelay(pdMS_TO_TICKS(SENSOR_READ_INTERVAL_MS));
     }
@@ -441,11 +400,12 @@ void TaskSensorRead(void *pvParameters) {
 
 #if ENABLE_GPS_MODULE
 void TaskGPSRead(void *pvParameters) {
+    uint32_t lastGpsWaitingLogMs = 0;
+
     while (true) {
         gpsManager.update();
 
         TelemetryData gpsSnapshot = getTelemetrySnapshot();
-
         gpsManager.readGPS(gpsSnapshot);
 
         updateTelemetry([&gpsSnapshot](TelemetryData &data) {
@@ -457,12 +417,15 @@ void TaskGPSRead(void *pvParameters) {
         });
 
         if (gpsSnapshot.gpsValid) {
-            Serial.printf("[GPS] Lat: %.6f  Lng: %.6f  Spd: %.1f km/h  Sats: %u\n",
-                          gpsSnapshot.latitude,
-                          gpsSnapshot.longitude,
-                          gpsSnapshot.gpsSpeedKmph,
-                          gpsSnapshot.gpsSatellites);
-        } else {
+            Serial.printf(
+                "[GPS] Lat: %.6f  Lng: %.6f  Spd: %.1f km/h  Sats: %u\n",
+                gpsSnapshot.latitude,
+                gpsSnapshot.longitude,
+                gpsSnapshot.gpsSpeedKmph,
+                gpsSnapshot.gpsSatellites
+            );
+        } else if ((millis() - lastGpsWaitingLogMs) >= 10000) {
+            lastGpsWaitingLogMs = millis();
             Serial.println("[GPS] Waiting for valid fix...");
         }
 
@@ -484,7 +447,9 @@ void TaskAIEventRead(void *pvParameters) {
 #endif
 
 void TaskNetworkService(void *pvParameters) {
-    uint32_t lastThingSpeakMs = 0;
+    Serial.println("[NETWORK] Network service task started");
+
+    uint32_t lastStatusMs = 0;
 
     while (true) {
 #if ENABLE_WIFI_TELEMETRY
@@ -507,18 +472,33 @@ void TaskNetworkService(void *pvParameters) {
 #endif
         });
 
-#if ENABLE_THINGSPEAK_UPLOAD
         uint32_t now = millis();
 
-        if ((now - lastThingSpeakMs) >= THINGSPEAK_UPLOAD_INTERVAL_MS) {
-            lastThingSpeakMs = now;
+        if ((now - lastStatusMs) >= 15000) {
+            lastStatusMs = now;
 
+#if ENABLE_WIFI_TELEMETRY
+            Serial.print("[NETWORK] Wi-Fi: ");
+            Serial.println(wifiManager.isConnected() ? "connected" : "offline");
+#else
+            Serial.println("[NETWORK] Wi-Fi telemetry disabled");
+#endif
+        }
+
+#if ENABLE_THINGSPEAK_UPLOAD
+        {
             TelemetryData snapshot = getTelemetrySnapshot();
             thingSpeakClient.update(snapshot);
         }
+#else
+        Serial.println("[NETWORK] ThingSpeak upload disabled");
 #endif
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+#if ENABLE_OTA_UPDATE
+        otaUpdate.handle();
+#endif
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -526,9 +506,7 @@ void TaskNetworkService(void *pvParameters) {
 void TaskDisplayService(void *pvParameters) {
     while (true) {
         TelemetryData snapshot = getTelemetrySnapshot();
-
         displayBridge.update(snapshot);
-
         vTaskDelay(pdMS_TO_TICKS(DISPLAY_UPDATE_INTERVAL_MS));
     }
 }

@@ -23,7 +23,6 @@ void DisplayBridge::update(const TelemetryData &data) {
     packet.airQualityIndex = data.airQualityIndex;
     packet.mq135Raw = data.mq135Raw;
     packet.mq135MilliVolts = static_cast<uint16_t>(data.mq135Voltage * 1000.0f);
-    packet.batteryMilliVolts = static_cast<uint16_t>(data.batteryVoltage * 1000.0f);
     packet.latitudeE7 = static_cast<int32_t>(data.latitude * 10000000.0);
     packet.longitudeE7 = static_cast<int32_t>(data.longitude * 10000000.0);
     packet.gpsSatellites = data.gpsSatellites;

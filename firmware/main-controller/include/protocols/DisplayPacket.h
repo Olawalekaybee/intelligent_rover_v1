@@ -21,7 +21,6 @@ struct __attribute__((packed)) DisplayPacket {
 
     uint16_t mq135Raw = 0;
     uint16_t mq135MilliVolts = 0;
-    uint16_t batteryMilliVolts = 0;
 
     int32_t latitudeE7 = 0;
     int32_t longitudeE7 = 0;

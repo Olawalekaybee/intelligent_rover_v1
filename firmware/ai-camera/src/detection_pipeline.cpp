@@ -1,3 +1,4 @@
+#include "StreamServer.h"
 #include "interfaces/DetectionPipeline.h"
 #include "config/AppConfig.h"
 
@@ -17,6 +18,9 @@ void DetectionPipeline::onDetection(const DetectionResult &result) {
     _i2c->updateDetection(result);
     _wifi->publishDetection(result);
 
+    StreamServer::notifyDetection(result.label.c_str(),
+                                   (uint8_t)(result.confidence * 100),
+                                   millis() / 1000);
     Serial.printf("[PIPELINE] %s  conf=%.2f  box=[%d,%d,%d,%d]\n",
                   result.label.c_str(), result.confidence,
                   result.x, result.y, result.w, result.h);

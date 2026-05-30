@@ -12,10 +12,6 @@ bool SensorManager::begin() {
     Serial.println("[SENSOR] MQ135 analog input initialized");
 #endif
 
-#if ENABLE_BATTERY_MONITOR
-    pinMode(PIN_BATTERY_ADC, INPUT);
-    Serial.println("[SENSOR] Battery monitor initialized");
-#endif
 
 #if ENABLE_AHT20_SENSOR
     _ahtReady = _aht.begin(&Wire);
@@ -116,26 +112,10 @@ void SensorManager::readEnvironment(TelemetryData &data) {
     data.mq135Voltage = 0.0f;
 #endif
 
-#if ENABLE_BATTERY_MONITOR
-    data.batteryVoltage = readBatteryVoltage();
-#else
-    data.batteryVoltage = 0.0f;
-#endif
 
     data.timestampMs = millis();
 }
 
 float SensorManager::readMQ135Voltage(uint16_t rawValue) const {
     return (static_cast<float>(rawValue) / ADC_MAX_COUNTS) * ADC_REFERENCE_VOLTAGE;
-}
-
-float SensorManager::readBatteryVoltage() const {
-#if ENABLE_BATTERY_MONITOR
-    const uint16_t raw = analogRead(PIN_BATTERY_ADC);
-    const float adcVoltage = (static_cast<float>(raw) / ADC_MAX_COUNTS) * ADC_REFERENCE_VOLTAGE;
-
-    return adcVoltage * BATTERY_DIVIDER_RATIO * BATTERY_CALIBRATION;
-#else
-    return 0.0f;
-#endif
 }

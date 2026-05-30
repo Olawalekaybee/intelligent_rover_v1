@@ -23,9 +23,8 @@
 
 #define ENABLE_GPS_MODULE        1
 #define ENABLE_CYD_DISPLAY       0
-#define ENABLE_BATTERY_MONITOR   0
 
-#define ENABLE_AI_EVENT_RECEIVER 1   // I2C master on Wire1 (GPIO4/13)
+#define ENABLE_AI_EVENT_RECEIVER 0  // I2C master on Wire1 (GPIO4/13)
 
 // ======================================================
 // Motor PWM
@@ -58,16 +57,12 @@
 #define SYSTEM_HEALTH_INTERVAL_MS 5000
 
 // ======================================================
-// Battery Voltage Divider
-// batteryVoltage = adcVoltage * BATTERY_DIVIDER_RATIO * BATTERY_CALIBRATION
 // ======================================================
 
 #define ADC_REFERENCE_VOLTAGE 3.30f
 #define ADC_MAX_COUNTS 4095.0f
 
 // Example divider: 100k top + 27k bottom = 4.7037 ratio
-#define BATTERY_DIVIDER_RATIO 4.7037f
-#define BATTERY_CALIBRATION 1.00f
 
 // ======================================================
 // I2C Display Bridge

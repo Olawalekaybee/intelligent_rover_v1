@@ -19,5 +19,4 @@ private:
     bool _ensReady = false;
 
     float readMQ135Voltage(uint16_t rawValue) const;
-    float readBatteryVoltage() const;
 };

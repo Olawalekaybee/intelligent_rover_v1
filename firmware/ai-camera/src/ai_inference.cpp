@@ -20,8 +20,11 @@ String AIInference::classLabel(int target) {
 
 // =============================================================================
 bool AIInference::begin() {
-    Wire.begin(GROVE_SDA_PIN, GROVE_SCL_PIN);
-    Wire.setClock(GROVE_I2C_FREQ);
+    if (!_wireStarted) {
+        Wire.begin(GROVE_SDA_PIN, GROVE_SCL_PIN);
+        Wire.setClock(GROVE_I2C_FREQ);
+        _wireStarted = true;
+    }
 
     if (!_ai.begin(&Wire)) {
         Serial.println("[AI] Grove Vision AI V2 not found");
@@ -61,8 +64,8 @@ DetectionResult AIInference::update(bool captureFrame) {
     DetectionResult result;
 
     if (!_ready) {
-        // Retry I2C init every 5 s
-        if ((millis() - _lastRetryMs) > 5000) {
+        // Retry I2C init every 10 s (silent after first warning)
+        if ((millis() - _lastRetryMs) > 10000) {
             _lastRetryMs = millis();
             begin();
         }

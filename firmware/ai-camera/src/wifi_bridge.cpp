@@ -95,8 +95,8 @@ bool WiFiBridge::isConnected() {
 void WiFiBridge::connectWiFi() {
     Serial.printf("[WIFI] Connecting to %s", WIFI_SSID);
 
-    WiFi.disconnect(true);
-    delay(100);
+    WiFi.disconnect(false);  // soft disconnect — keeps radio on, avoids re-init race
+    delay(200);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     uint32_t start = millis();
@@ -107,6 +107,7 @@ void WiFiBridge::connectWiFi() {
     Serial.println();
 
     if (isConnected()) {
+        WiFi.setSleep(false);   // no BT on XIAO — WIFI_PS_NONE is safe, removes modem sleep latency
         Serial.printf("[WIFI] Connected — IP: %s  RSSI: %d dBm\n",
                       WiFi.localIP().toString().c_str(), WiFi.RSSI());
     } else {

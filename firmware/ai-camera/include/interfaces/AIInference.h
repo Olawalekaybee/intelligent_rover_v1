@@ -40,7 +40,8 @@ private:
 
     uint8_t* _frameBuffer = nullptr;
     size_t   _frameLen    = 0;
-    bool     _hasNewFrame = false;
+    bool     _hasNewFrame  = false;
+    bool     _wireStarted  = false;    // Wire.begin() must only run once
 
     static String classLabel(int target);
     bool   decodeFrame(const String &b64);
